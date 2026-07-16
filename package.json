@@ -1,0 +1,85 @@
+{
+  "name": "script-journal",
+  "version": "1.0.0",
+  "description": "Run a JS script module, write its returned data to a JSON file and execution logs to a log file",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/cjs/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "init": "npm i",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.esm.json",
+    "build:watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "prepare": "husky",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.ts"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hum1st/script-journal"
+  },
+  "keywords": [
+    "script",
+    "runner",
+    "json",
+    "log",
+    "task",
+    "journal"
+  ],
+  "author": "hum1st",
+  "license": "MIT",
+  "homepage": "https://github.com/hum1st/script-journal#readme",
+  "bugs": {
+    "url": "https://github.com/hum1st/script-journal/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.0.0",
+    "eslint": "^10.7.0",
+    "globals": "^17.7.0",
+    "husky": "^9.0.0",
+    "jest": "^30.4.2",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.0.0",
+    "ts-jest": "^29.4.11",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.64.0"
+  },
+  "lint-staged": {
+    "*.{ts,mjs}": [
+      "prettier --write",
+      "eslint --fix"
+    ]
+  }
+}

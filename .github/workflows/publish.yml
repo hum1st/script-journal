@@ -1,0 +1,102 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # ── Part 1: 版本检查 & Lint ─────────────────────────────────────────────
+  check:
+    name: Check version & Lint
+    runs-on: ubuntu-latest
+    outputs:
+      already_published: ${{ steps.version_check.outputs.already_published }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check if version already published
+        id: version_check
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Checking $PKG_NAME@$PKG_VERSION on npm..."
+          if npm view "$PKG_NAME@$PKG_VERSION" version 2>/dev/null | grep -q "$PKG_VERSION"; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "Version $PKG_VERSION is already published, skipping."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            echo "Version $PKG_VERSION not found on npm, proceeding with publish."
+          fi
+
+      - name: Lint
+        if: steps.version_check.outputs.already_published == 'false'
+        run: npm run lint
+
+  # ── Part 2: 跨平台测试 ──────────────────────────────────────────────────
+  test:
+    name: Test on ${{ matrix.os }}
+    needs: check
+    if: needs.check.outputs.already_published == 'false'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+  # ── Part 3: 构建 & 发布 ─────────────────────────────────────────────────
+  publish:
+    name: Build & Publish
+    needs: [check, test]
+    if: needs.check.outputs.already_published == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # 用于 npm provenance
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
