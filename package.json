@@ -1,6 +1,6 @@
 {
   "name": "script-journal",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Run a JS script module, write its returned data to a JSON file and execution logs to a log file",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
