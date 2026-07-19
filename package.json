@@ -1,6 +1,6 @@
 {
   "name": "script-journal",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Task journal: run named task modules in a child process with JSON status and NDJSON logs (ESM/CJS)",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
@@ -29,6 +29,7 @@
     "test:coverage": "npm run build && jest --coverage",
     "lint": "eslint src tests scripts",
     "lint:fix": "eslint src tests scripts --fix",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepare": "husky",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
