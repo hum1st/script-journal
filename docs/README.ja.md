@@ -17,22 +17,28 @@ npm install script-journal
 ```ts
 import { runTask, readTaskJson, readTaskLog } from "script-journal";
 
-const { exitCode, jsonPath, logPath } = await runTask({
-  cwd: "/path/to/your-app", // 任意、デフォルト process.cwd()
-  task: "src/tasks/updateRegistriesTask.mjs", // 絶対パス、または cwd 相対
-  output: "tmp/tasks/update-registries", // 絶対パス、または cwd 相対（拡張子なし）
-  parameters: { registries: ["foo"] },
-});
+try {
+  const state = await runTask({
+    cwd: "/path/to/your-app", // 任意、デフォルト process.cwd()
+    task: "src/tasks/helloTask.mjs", // 絶対パス、または cwd 相対
+    output: "tmp/tasks/hello", // 絶対パス、または cwd 相対（拡張子なし）
+    parameters: { name: "world" },
+  });
+  // state はタスク JSON（status: "done", ...）
+} catch (state) {
+  // 失敗時は同じ JSON オブジェクトが throw される（エラーは既にファイルへ書き込み済み）
+  console.error(state.error);
+}
 
-const state = readTaskJson({
+const persisted = readTaskJson({
   cwd: "/path/to/your-app",
-  output: "tmp/tasks/update-registries",
+  output: "tmp/tasks/hello",
 });
 
 // デフォルトは tail=true（最新ページ）。totalLines は maxLogLines で上限あり
 const log = readTaskLog({
   cwd: "/path/to/your-app",
-  output: "tmp/tasks/update-registries",
+  output: "tmp/tasks/hello",
   pageSize: 50,
 });
 ```
@@ -48,9 +54,9 @@ const { runTask, readTaskJson, readTaskLog } = require("script-journal");
 ## タスクモジュール規約
 
 ```js
-// src/tasks/updateRegistriesTask.mjs
+// src/tasks/helloTask.mjs
 export async function run(parameters, ctx) {
-  ctx.logger.info("sync started");
+  ctx.logger.info("hello started");
   ctx.patchResults({ total: 0, failed: 0 });
 
   // ... parameters を使った処理 ...
@@ -82,8 +88,9 @@ export async function run(parameters, ctx) {
 
 ```json
 {
-  "task": "/abs/path/to/updateRegistriesTask.mjs",
+  "task": "/abs/path/to/helloTask.mjs",
   "status": "pending|running|done|failed|error",
+  "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
   "durationMs": 0,
@@ -99,7 +106,7 @@ export async function run(parameters, ctx) {
 `<output>.log` — 1 行につき 1 つの NDJSON：
 
 ```json
-{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"sync started"}
+{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"hello started"}
 ```
 
 ログが `maxLogLines`（デフォルト **10000**）を超えると、先頭から古い行を削除し最新行のみ残します。`maxLogLines: 0` でトリムを無効化できます。
@@ -116,7 +123,7 @@ export async function run(parameters, ctx) {
 | `parameters` | `object` | ❌ | `run(parameters, ctx)` に渡す |
 | `maxLogLines` | `number` | ❌ | 保持する最大ログ行数。超過分は先頭から削除。デフォルト `10000`。`≤0` で無効 |
 
-戻り値：`{ exitCode, jsonPath, logPath }`。
+成功時はタスク JSON 状態を返す。失敗時は同じ JSON オブジェクトで reject する（エラーは既に `<output>.json` に書き込み済み）。
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 

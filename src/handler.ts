@@ -1,8 +1,30 @@
 import { spawn } from "child_process";
 import * as fs from "fs";
 import { appendChunkAsLines, appendLogLine, DEFAULT_MAX_LOG_LINES, trimLogFile } from "./log";
-import type { RunTaskOptions, RunTaskResult, TaskState } from "./types";
+import type { RunTaskOptions, TaskState } from "./types";
 import { ensureDir, resolveFromCwd, resolveRunnerPath } from "./paths";
+
+function readTaskState(jsonPath: string, fallback: TaskState): TaskState {
+  try {
+    return JSON.parse(fs.readFileSync(jsonPath, "utf8")) as TaskState;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeErrorState(jsonPath: string, state: TaskState, error: string): TaskState {
+  const finishedAt = new Date().toISOString();
+  const next: TaskState = {
+    ...state,
+    status: "error",
+    finishedAt,
+    durationMs: state.startedAt != null ? Date.now() - new Date(state.startedAt).getTime() : null,
+    success: false,
+    error,
+  };
+  fs.writeFileSync(jsonPath, JSON.stringify(next, null, 2), "utf8");
+  return next;
+}
 
 /**
  * 启动一个任务子进程。
@@ -11,8 +33,10 @@ import { ensureDir, resolveFromCwd, resolveRunnerPath } from "./paths";
  * 2. 清空 `<output>.log`
  * 3. spawn runner，将 stdout/stderr 静默写入 NDJSON 日志（不向控制台输出）
  * 4. 日志超过 maxLogLines 时从头部删除旧行
+ *
+ * 成功时 resolve 为任务 JSON 状态；失败时 reject 该 JSON 对象（错误已写入文件）。
  */
-export function runTask(options: RunTaskOptions): Promise<RunTaskResult> {
+export function runTask(options: RunTaskOptions): Promise<TaskState> {
   if (!options?.task) {
     throw new TypeError("script-journal: runTask requires options.task");
   }
@@ -36,6 +60,7 @@ export function runTask(options: RunTaskOptions): Promise<RunTaskResult> {
   const initPayload: TaskState = {
     task: taskPath,
     status: "pending",
+    pid: null,
     startedAt: null,
     finishedAt: null,
     durationMs: null,
@@ -57,7 +82,16 @@ export function runTask(options: RunTaskOptions): Promise<RunTaskResult> {
     }
   }
 
-  return new Promise((resolvePromise) => {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+
+    function settle(ok: boolean, state: TaskState): void {
+      if (settled) return;
+      settled = true;
+      if (ok) resolvePromise(state);
+      else rejectPromise(state);
+    }
+
     const child = spawn(
       process.execPath,
       [runner, "--task", taskPath, "--output", outputBase, "--cwd", cwd],
@@ -80,14 +114,16 @@ export function runTask(options: RunTaskOptions): Promise<RunTaskResult> {
       if (appendLogLine(logPath, `exit code: ${exitCode}`, exitCode === 0 ? "info" : "error")) {
         trackAppend(1);
       }
-      resolvePromise({ exitCode, logPath, jsonPath });
+      const state = readTaskState(jsonPath, initPayload);
+      settle(exitCode === 0, state);
     });
 
     child.on("error", (err) => {
       if (appendLogLine(logPath, `spawn error: ${err.message}`, "error")) {
         trackAppend(1);
       }
-      resolvePromise({ exitCode: 1, logPath, jsonPath });
+      const current = readTaskState(jsonPath, initPayload);
+      settle(false, writeErrorState(jsonPath, current, `spawn error: ${err.message}`));
     });
   });
 }

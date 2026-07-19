@@ -15,7 +15,6 @@ export type {
   ReadLogOptions,
   ReadLogResult,
   RunTaskOptions,
-  RunTaskResult,
   TaskContext,
   TaskLogger,
   TaskResult,

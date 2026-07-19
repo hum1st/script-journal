@@ -1,6 +1,6 @@
 {
   "name": "script-journal",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Task journal: run named task modules in a child process with JSON status and NDJSON logs (ESM/CJS)",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
@@ -26,8 +26,8 @@
     "build:watch": "tsc --watch",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build",
-    "test": "npm run build && jest",
-    "test:watch": "jest --watch",
+    "test": "npm run build && jest --coverage",
+    "test:coverage": "npm run build && jest --coverage",
     "lint": "eslint src tests scripts",
     "lint:fix": "eslint src tests scripts --fix",
     "prepare": "husky",
@@ -37,9 +37,25 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
+    "verbose": true,
     "testMatch": [
       "**/tests/**/*.test.ts"
-    ]
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/types.ts"
+    ],
+    "coverageReporters": [
+      "text"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 80,
+        "functions": 80,
+        "lines": 80,
+        "statements": 80
+      }
+    }
   },
   "repository": {
     "type": "git",

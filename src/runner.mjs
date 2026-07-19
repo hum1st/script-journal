@@ -97,6 +97,7 @@ async function main() {
   const state = {
     task: taskPath,
     status: "running",
+    pid: process.pid,
     startedAt,
     finishedAt: null,
     durationMs: null,

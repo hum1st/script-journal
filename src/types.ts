@@ -9,6 +9,8 @@ export interface TaskState {
   /** 任务文件路径（解析后的绝对路径） */
   task: string;
   status: TaskStatus;
+  /** 任务子进程 PID；未启动或 spawn 失败时为 null */
+  pid: number | null;
   startedAt: string | null;
   finishedAt: string | null;
   durationMs: number | null;
@@ -89,13 +91,6 @@ export interface RunTaskOptions {
    * @default 10000
    */
   maxLogLines?: number;
-}
-
-/** runTask 的返回值 */
-export interface RunTaskResult {
-  exitCode: number;
-  logPath: string;
-  jsonPath: string;
 }
 
 /** 单条 NDJSON 日志 */

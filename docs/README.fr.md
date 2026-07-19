@@ -17,22 +17,28 @@ npm install script-journal
 ```ts
 import { runTask, readTaskJson, readTaskLog } from "script-journal";
 
-const { exitCode, jsonPath, logPath } = await runTask({
-  cwd: "/path/to/your-app", // optionnel, défaut process.cwd()
-  task: "src/tasks/updateRegistriesTask.mjs", // absolu ou relatif à cwd
-  output: "tmp/tasks/update-registries", // absolu ou relatif à cwd (sans extension)
-  parameters: { registries: ["foo"] },
-});
+try {
+  const state = await runTask({
+    cwd: "/path/to/your-app", // optionnel, défaut process.cwd()
+    task: "src/tasks/helloTask.mjs", // absolu ou relatif à cwd
+    output: "tmp/tasks/hello", // absolu ou relatif à cwd (sans extension)
+    parameters: { name: "world" },
+  });
+  // state est le JSON de la tâche (status: "done", ...)
+} catch (state) {
+  // en cas d'échec, le même objet JSON est rejeté (erreur déjà écrite dans le fichier)
+  console.error(state.error);
+}
 
-const state = readTaskJson({
+const persisted = readTaskJson({
   cwd: "/path/to/your-app",
-  output: "tmp/tasks/update-registries",
+  output: "tmp/tasks/hello",
 });
 
 // Par défaut tail=true (dernières pages). totalLines est borné par maxLogLines.
 const log = readTaskLog({
   cwd: "/path/to/your-app",
-  output: "tmp/tasks/update-registries",
+  output: "tmp/tasks/hello",
   pageSize: 50,
 });
 ```
@@ -48,9 +54,9 @@ Le processus parent reste silencieux : stdout/stderr de l’enfant sont uniqueme
 ## Contrat du module de tâche
 
 ```js
-// src/tasks/updateRegistriesTask.mjs
+// src/tasks/helloTask.mjs
 export async function run(parameters, ctx) {
-  ctx.logger.info("sync started");
+  ctx.logger.info("hello started");
   ctx.patchResults({ total: 0, failed: 0 });
 
   // ... travail avec parameters ...
@@ -82,8 +88,9 @@ Code de sortie : `0` en cas de succès, sinon `1`.
 
 ```json
 {
-  "task": "/abs/path/to/updateRegistriesTask.mjs",
+  "task": "/abs/path/to/helloTask.mjs",
   "status": "pending|running|done|failed|error",
+  "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
   "durationMs": 0,
@@ -99,7 +106,7 @@ Code de sortie : `0` en cas de succès, sinon `1`.
 `<output>.log` — un objet NDJSON par ligne :
 
 ```json
-{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"sync started"}
+{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"hello started"}
 ```
 
 Lorsque le log dépasse `maxLogLines` (défaut **10000**), les anciennes lignes sont supprimées en tête pour ne garder que les plus récentes. Passez `maxLogLines: 0` pour désactiver le trim.
@@ -116,7 +123,7 @@ Lorsque le log dépasse `maxLogLines` (défaut **10000**), les anciennes lignes 
 | `parameters` | `object` | ❌ | Passé à `run(parameters, ctx)` |
 | `maxLogLines` | `number` | ❌ | Nombre max de lignes de log conservées ; les plus anciennes sont retirées en tête. Défaut `10000`. `≤0` désactive |
 
-Renvoie `{ exitCode, jsonPath, logPath }`.
+En cas de succès, renvoie l'état JSON de la tâche. En cas d'échec, rejette avec ce même objet JSON (erreur déjà persistée dans `<output>.json`).
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 

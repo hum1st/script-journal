@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { runTask, readTaskJson, readTaskLog } from "../src/index";
+import type { TaskState } from "../src/types";
 
 let tmpRoot: string;
 let tasksDir: string;
@@ -74,7 +75,7 @@ afterAll(() => {
 
 describe("runTask – ESM 任务成功", () => {
   const output = "out/hello";
-  let result: Awaited<ReturnType<typeof runTask>>;
+  let result: TaskState;
 
   beforeAll(async () => {
     result = await runTask({
@@ -85,22 +86,22 @@ describe("runTask – ESM 任务成功", () => {
     });
   });
 
-  test("退出码为 0", () => {
-    expect(result.exitCode).toBe(0);
-  });
-
-  test("JSON 状态为 done 且包含 results", () => {
-    const state = readTaskJson({ cwd: tmpRoot, output });
-    expect(state).toMatchObject({
+  test("返回 JSON 状态为 done 且包含 results", () => {
+    expect(result).toMatchObject({
       status: "done",
       success: true,
       parameters: { echo: "world" },
       results: { step: 2, echo: "world", done: true },
     });
-    expect(state?.task).toBe(path.join(tmpRoot, "tasks", "hello.mjs"));
-    expect(state?.startedAt).toBeTruthy();
-    expect(state?.finishedAt).toBeTruthy();
-    expect(state?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(result.task).toBe(path.join(tmpRoot, "tasks", "hello.mjs"));
+    expect(typeof result.pid).toBe("number");
+    expect(result.pid).toBeGreaterThan(0);
+    expect(result.startedAt).toBeTruthy();
+    expect(result.finishedAt).toBeTruthy();
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+
+    const state = readTaskJson({ cwd: tmpRoot, output });
+    expect(state).toMatchObject(result);
   });
 
   test("日志为带级别的 NDJSON", () => {
@@ -112,73 +113,84 @@ describe("runTask – ESM 任务成功", () => {
     expect(log.entries.some((e) => e.level === "info")).toBe(true);
     expect(log.entries.some((e) => e.level === "debug")).toBe(true);
   });
-
-  test("产出路径解析在 cwd 下", () => {
-    expect(result.jsonPath).toBe(path.join(tmpRoot, "out", "hello.json"));
-    expect(result.logPath).toBe(path.join(tmpRoot, "out", "hello.log"));
-  });
 });
 
 describe("runTask – 软失败", () => {
-  test("status 为 failed 且退出码为 1", async () => {
+  test("reject 任务 JSON，status 为 failed", async () => {
     const output = "out/fail-soft";
-    const { exitCode } = await runTask({
-      cwd: tmpRoot,
-      task: path.join(tasksDir, "failSoft.mjs"),
-      output,
+    let thrown: unknown;
+    try {
+      await runTask({
+        cwd: tmpRoot,
+        task: path.join(tasksDir, "failSoft.mjs"),
+        output,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toMatchObject({
+      status: "failed",
+      success: false,
+      error: "soft failure",
+      results: { code: 42 },
     });
-    expect(exitCode).toBe(1);
     const state = readTaskJson({ cwd: tmpRoot, output });
-    expect(state?.status).toBe("failed");
-    expect(state?.success).toBe(false);
-    expect(state?.error).toBe("soft failure");
-    expect(state?.results).toMatchObject({ code: 42 });
+    expect(state).toMatchObject(thrown as TaskState);
   });
 });
 
 describe("runTask – 抛出异常", () => {
-  test("status 为 error", async () => {
+  test("reject 任务 JSON，status 为 error", async () => {
     const output = "out/throw";
-    const { exitCode } = await runTask({
-      cwd: tmpRoot,
-      task: "tasks/throw.mjs",
-      output,
+    let thrown: unknown;
+    try {
+      await runTask({
+        cwd: tmpRoot,
+        task: "tasks/throw.mjs",
+        output,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toMatchObject({
+      status: "error",
+      success: false,
     });
-    expect(exitCode).toBe(1);
+    expect((thrown as TaskState).error).toContain("boom");
     const state = readTaskJson({ cwd: tmpRoot, output });
-    expect(state?.status).toBe("error");
-    expect(state?.success).toBe(false);
-    expect(state?.error).toContain("boom");
+    expect(state).toMatchObject(thrown as TaskState);
   });
 });
 
 describe("runTask – CJS 任务模块", () => {
   test("能加载并执行 .cjs", async () => {
     const output = "out/cjs-demo";
-    const { exitCode } = await runTask({
+    const result = await runTask({
       cwd: tmpRoot,
       task: "tasks/cjsDemo.cjs",
       output,
       parameters: { n: 7 },
     });
-    expect(exitCode).toBe(0);
-    const state = readTaskJson({ cwd: tmpRoot, output });
-    expect(state?.results).toMatchObject({ from: "cjs", n: 7 });
+    expect(result.success).toBe(true);
+    expect(result.results).toMatchObject({ from: "cjs", n: 7 });
   });
 });
 
 describe("runTask – 任务文件不存在", () => {
-  test("status 为 error", async () => {
+  test("reject 任务 JSON，status 为 error", async () => {
     const output = "out/missing";
-    const { exitCode } = await runTask({
-      cwd: tmpRoot,
-      task: "tasks/no-such.mjs",
-      output,
-    });
-    expect(exitCode).toBe(1);
-    const state = readTaskJson({ cwd: tmpRoot, output });
-    expect(state?.status).toBe("error");
-    expect(state?.error).toMatch(/Cannot find task file/);
+    let thrown: unknown;
+    try {
+      await runTask({
+        cwd: tmpRoot,
+        task: "tasks/no-such.mjs",
+        output,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toMatchObject({ status: "error" });
+    expect((thrown as TaskState).error).toMatch(/Cannot find task file/);
   });
 });
 
@@ -186,7 +198,7 @@ describe("runTask – maxLogLines 集成", () => {
   test("执行过程中裁剪最旧日志行", async () => {
     const output = "out/spam";
     const maxLogLines = 20;
-    const { logPath } = await runTask({
+    await runTask({
       cwd: tmpRoot,
       task: "tasks/spam.mjs",
       output,
@@ -194,6 +206,7 @@ describe("runTask – maxLogLines 集成", () => {
       maxLogLines,
     });
 
+    const logPath = path.join(tmpRoot, `${output}.log`);
     const raw = fs.readFileSync(logPath, "utf8");
     const lines = raw.split("\n").filter((l) => l.length > 0);
     expect(lines.length).toBeLessThanOrEqual(maxLogLines);
@@ -212,5 +225,42 @@ describe("runTask 参数校验", () => {
 
   test("缺少 output 时抛错", () => {
     expect(() => runTask({ task: "a.mjs", output: "" } as never)).toThrow(/output/);
+  });
+});
+
+describe("readTaskJson", () => {
+  test("缺少 output 时抛错", () => {
+    expect(() => readTaskJson({ output: "" } as never)).toThrow(/output/);
+    expect(() => readTaskJson(undefined as never)).toThrow(/output/);
+  });
+
+  test("状态文件不存在时返回 null", () => {
+    expect(readTaskJson({ cwd: tmpRoot, output: "out/no-such-state" })).toBeNull();
+  });
+
+  test("JSON 无效时返回 null", () => {
+    const output = "out/bad-json";
+    const jsonPath = path.join(tmpRoot, `${output}.json`);
+    fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+    fs.writeFileSync(jsonPath, "{not-json", "utf8");
+    expect(readTaskJson({ cwd: tmpRoot, output })).toBeNull();
+  });
+
+  test("未传 cwd 时使用 process.cwd()", () => {
+    const output = "out/cwd-default";
+    const absOutput = path.join(tmpRoot, output);
+    const prev = process.cwd();
+    process.chdir(tmpRoot);
+    try {
+      fs.mkdirSync(path.dirname(`${absOutput}.json`), { recursive: true });
+      fs.writeFileSync(
+        `${absOutput}.json`,
+        JSON.stringify({ status: "done", success: true }),
+        "utf8"
+      );
+      expect(readTaskJson({ output })).toMatchObject({ status: "done", success: true });
+    } finally {
+      process.chdir(prev);
+    }
   });
 });

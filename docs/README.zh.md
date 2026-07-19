@@ -17,22 +17,28 @@ npm install script-journal
 ```ts
 import { runTask, readTaskJson, readTaskLog } from "script-journal";
 
-const { exitCode, jsonPath, logPath } = await runTask({
-  cwd: "/path/to/your-app", // 可选，默认 process.cwd()
-  task: "src/tasks/updateRegistriesTask.mjs", // 绝对路径，或相对 cwd
-  output: "tmp/tasks/update-registries", // 绝对路径，或相对 cwd（不含扩展名）
-  parameters: { registries: ["foo"] },
-});
+try {
+  const state = await runTask({
+    cwd: "/path/to/your-app", // 可选，默认 process.cwd()
+    task: "src/tasks/helloTask.mjs", // 绝对路径，或相对 cwd
+    output: "tmp/tasks/hello", // 绝对路径，或相对 cwd（不含扩展名）
+    parameters: { name: "world" },
+  });
+  // state 即为任务 JSON（status: "done", ...）
+} catch (state) {
+  // 失败时抛出同一份 JSON 对象（错误已写入文件）
+  console.error(state.error);
+}
 
-const state = readTaskJson({
+const persisted = readTaskJson({
   cwd: "/path/to/your-app",
-  output: "tmp/tasks/update-registries",
+  output: "tmp/tasks/hello",
 });
 
 // 默认 tail=true（查看最后几页）；totalLines 受 maxLogLines 约束
 const log = readTaskLog({
   cwd: "/path/to/your-app",
-  output: "tmp/tasks/update-registries",
+  output: "tmp/tasks/hello",
   pageSize: 50,
 });
 ```
@@ -48,9 +54,9 @@ const { runTask, readTaskJson, readTaskLog } = require("script-journal");
 ## 任务模块约定
 
 ```js
-// src/tasks/updateRegistriesTask.mjs
+// src/tasks/helloTask.mjs
 export async function run(parameters, ctx) {
-  ctx.logger.info("sync started");
+  ctx.logger.info("hello started");
   ctx.patchResults({ total: 0, failed: 0 });
 
   // ... 使用 parameters 执行业务 ...
@@ -82,8 +88,9 @@ export async function run(parameters, ctx) {
 
 ```json
 {
-  "task": "/abs/path/to/updateRegistriesTask.mjs",
+  "task": "/abs/path/to/helloTask.mjs",
   "status": "pending|running|done|failed|error",
+  "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
   "durationMs": 0,
@@ -99,7 +106,7 @@ export async function run(parameters, ctx) {
 `<output>.log` — 每行一条 NDJSON：
 
 ```json
-{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"sync started"}
+{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"hello started"}
 ```
 
 当日志超过 `maxLogLines`（默认 **10000**）时，从文件头部删除旧行，只保留最新内容。传 `maxLogLines: 0` 可关闭裁剪。
@@ -116,7 +123,7 @@ export async function run(parameters, ctx) {
 | `parameters` | `object` | ❌ | 传给 `run(parameters, ctx)` |
 | `maxLogLines` | `number` | ❌ | 日志最多保留行数，超出从头部删除。默认 `10000`；`≤0` 表示不裁剪 |
 
-返回 `{ exitCode, jsonPath, logPath }`。
+成功时返回任务 JSON 状态；失败时以同一份 JSON 对象 reject（错误已写入 `<output>.json`）。
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 

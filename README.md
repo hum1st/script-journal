@@ -17,22 +17,28 @@ npm install script-journal
 ```ts
 import { runTask, readTaskJson, readTaskLog } from "script-journal";
 
-const { exitCode, jsonPath, logPath } = await runTask({
-  cwd: "/path/to/your-app", // optional, default process.cwd()
-  task: "src/tasks/updateRegistriesTask.mjs", // absolute or relative to cwd
-  output: "tmp/tasks/update-registries", // absolute or relative to cwd (no extension)
-  parameters: { registries: ["foo"] },
-});
+try {
+  const state = await runTask({
+    cwd: "/path/to/your-app", // optional, default process.cwd()
+    task: "src/tasks/helloTask.mjs", // absolute or relative to cwd
+    output: "tmp/tasks/hello", // absolute or relative to cwd (no extension)
+    parameters: { name: "world" },
+  });
+  // state is the task JSON (status: "done", ...)
+} catch (state) {
+  // on failure, the same JSON object is thrown (error already written to file)
+  console.error(state.error);
+}
 
-const state = readTaskJson({
+const persisted = readTaskJson({
   cwd: "/path/to/your-app",
-  output: "tmp/tasks/update-registries",
+  output: "tmp/tasks/hello",
 });
 
 // Defaults to tail=true (latest pages). totalLines is bounded by maxLogLines.
 const log = readTaskLog({
   cwd: "/path/to/your-app",
-  output: "tmp/tasks/update-registries",
+  output: "tmp/tasks/hello",
   pageSize: 50,
 });
 ```
@@ -48,9 +54,9 @@ Parent process stays silent: child stdout/stderr are captured into the log file 
 ## Task module contract
 
 ```js
-// src/tasks/updateRegistriesTask.mjs
+// src/tasks/helloTask.mjs
 export async function run(parameters, ctx) {
-  ctx.logger.info("sync started");
+  ctx.logger.info("hello started");
   ctx.patchResults({ total: 0, failed: 0 });
 
   // ... work using parameters ...
@@ -82,8 +88,9 @@ Written to `<output>.json`:
 
 ```json
 {
-  "task": "/abs/path/to/updateRegistriesTask.mjs",
+  "task": "/abs/path/to/helloTask.mjs",
   "status": "pending|running|done|failed|error",
+  "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
   "durationMs": 0,
@@ -99,7 +106,7 @@ Written to `<output>.json`:
 `<output>.log` — one NDJSON object per line:
 
 ```json
-{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"sync started"}
+{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"hello started"}
 ```
 
 When the log exceeds `maxLogLines` (default **10000**), older lines are deleted from the head so only the newest lines remain. Pass `maxLogLines: 0` to disable trimming.
@@ -116,7 +123,7 @@ When the log exceeds `maxLogLines` (default **10000**), older lines are deleted 
 | `parameters` | `object` | ❌ | Passed to `run(parameters, ctx)` |
 | `maxLogLines` | `number` | ❌ | Max retained log lines; older lines dropped from head. Default `10000`. `≤0` disables |
 
-Returns `{ exitCode, jsonPath, logPath }`.
+Returns the task JSON state on success. On failure, rejects with that same JSON object (error is already persisted to `<output>.json`).
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 

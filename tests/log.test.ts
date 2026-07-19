@@ -41,6 +41,12 @@ describe("appendLogLine", () => {
     expect(appendLogLine(logPath, "")).toBe(false);
     expect(fs.readFileSync(logPath, "utf8")).toBe("");
   });
+
+  test("写入失败时返回 false", () => {
+    const dirAsFile = path.join(tmpDir, "not-a-file");
+    fs.mkdirSync(dirAsFile);
+    expect(appendLogLine(dirAsFile, "x", "info")).toBe(false);
+  });
 });
 
 describe("appendChunkAsLines", () => {
@@ -91,6 +97,10 @@ describe("trimLogFile", () => {
     expect(trimLogFile(logPath, 0)).toBe(0);
     expect(trimLogFile(logPath, -1)).toBe(0);
   });
+
+  test("文件不存在时返回 0", () => {
+    expect(trimLogFile(path.join(tmpDir, "missing.log"), 10)).toBe(0);
+  });
 });
 
 describe("readTaskLog", () => {
@@ -133,5 +143,35 @@ describe("readTaskLog", () => {
 
   test("缺少 output 时抛错", () => {
     expect(() => readTaskLog({ output: "" } as never)).toThrow(/output/);
+  });
+
+  test("非 JSON 行回退为普通消息", () => {
+    const file = path.join(tmpDir, `${output}.log`);
+    fs.writeFileSync(file, "not-json-line\n", "utf8");
+    const result = readTaskLog({ cwd: tmpDir, output, pageSize: 10 });
+    expect(result.entries).toEqual([{ timestamp: "", level: "info", message: "not-json-line" }]);
+  });
+
+  test("部分字段缺失时使用默认值", () => {
+    const file = path.join(tmpDir, `${output}.log`);
+    fs.writeFileSync(file, '{"message":"only-msg"}\n', "utf8");
+    const result = readTaskLog({ cwd: tmpDir, output, pageSize: 10 });
+    expect(result.entries).toEqual([{ timestamp: "", level: "info", message: "only-msg" }]);
+  });
+
+  test("JSON 非对象时回退为普通消息", () => {
+    const file = path.join(tmpDir, `${output}.log`);
+    fs.writeFileSync(file, "null\n[]\n", "utf8");
+    const result = readTaskLog({ cwd: tmpDir, output, pageSize: 10, tail: false });
+    expect(result.entries.map((e) => e.message)).toEqual(["null", "[]"]);
+  });
+
+  test("空日志文件 totalPages 为 1", () => {
+    const file = path.join(tmpDir, `${output}.log`);
+    fs.writeFileSync(file, "", "utf8");
+    const result = readTaskLog({ cwd: tmpDir, output });
+    expect(result.totalLines).toBe(0);
+    expect(result.totalPages).toBe(1);
+    expect(result.entries).toEqual([]);
   });
 });
