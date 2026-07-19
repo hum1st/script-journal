@@ -132,6 +132,8 @@ Before writing a new pending state, `runTask` reads any existing `<output>.json`
 
 Returns the task JSON state on success. On failure, rejects with that same JSON object (error is already persisted to `<output>.json`).
 
+**Windows:** process liveness uses `tasklist`; termination uses `taskkill /T /F` (process tree). Spawn uses `windowsHide: true`. Runner `SIGTERM` handlers are not invoked by `taskkill /F`; `stopTask` still writes `status: "stopped"` in the parent after kill.
+
 ### `stopTask({ cwd?, output })`
 
 Force-stop the task for `output`: terminate a live `pid` from `<output>.json`, then write `status: "stopped"`, `success: false`, `pid: null`. Idempotent if the process is already gone. Throws if the state file is missing.

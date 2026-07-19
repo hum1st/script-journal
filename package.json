@@ -1,6 +1,6 @@
 {
   "name": "script-journal",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Task journal: run named task modules in a child process with JSON status and NDJSON logs (ESM/CJS)",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",

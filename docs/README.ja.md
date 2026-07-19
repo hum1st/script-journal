@@ -132,6 +132,8 @@ export async function run(parameters, ctx) {
 
 成功時はタスク JSON 状態を返す。失敗時は同じ JSON オブジェクトで reject する（エラーは既に `<output>.json` に書き込み済み）。
 
+**Windows:** 生存確認は `tasklist`、終了は `taskkill /T /F`。spawn は `windowsHide: true`。
+
 ### `stopTask({ cwd?, output })`
 
 `output` に対応するタスクを強制停止：`<output>.json` の生存 `pid` を終了し、`status: "stopped"`、`success: false`、`pid: null` を書き込む。プロセスが既に終了している場合は冪等。状態ファイルがない場合はエラーを投げる。

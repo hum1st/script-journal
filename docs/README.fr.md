@@ -132,6 +132,8 @@ Avant d’écrire un nouvel état pending, `runTask` lit tout `<output>.json` ex
 
 En cas de succès, renvoie l'état JSON de la tâche. En cas d'échec, rejette avec ce même objet JSON (erreur déjà persistée dans `<output>.json`).
 
+**Windows :** détection de vie via `tasklist` ; arrêt via `taskkill /T /F`. Spawn avec `windowsHide: true`.
+
 ### `stopTask({ cwd?, output })`
 
 Arrêter de force la tâche pour `output` : terminer un `pid` vivant depuis `<output>.json`, puis écrire `status: "stopped"`, `success: false`, `pid: null`. Idempotent si le processus est déjà terminé. Lève une erreur si le fichier d’état est absent.

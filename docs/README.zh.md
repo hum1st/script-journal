@@ -132,6 +132,8 @@ export async function run(parameters, ctx) {
 
 成功时返回任务 JSON 状态；失败时以同一份 JSON 对象 reject（错误已写入 `<output>.json`）。
 
+**Windows：** 存活检测使用 `tasklist`；终止使用 `taskkill /T /F`（整棵进程树）。spawn 使用 `windowsHide: true`。`taskkill /F` 不会触发 runner 的 `SIGTERM` 处理函数；由父进程 `stopTask` 在杀进程后写入 `status: "stopped"`。
+
 ### `stopTask({ cwd?, output })`
 
 强制停止 `output` 对应任务：若 JSON 中的 `pid` 仍存活则终止，并将状态写为 `status: "stopped"`、`success: false`、`pid: null`。进程已退出时幂等收敛。无状态文件时抛错。

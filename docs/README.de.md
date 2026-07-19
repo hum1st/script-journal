@@ -132,6 +132,8 @@ Bevor ein neuer pending-Status geschrieben wird, liest `runTask` vorhandenes `<o
 
 Gibt bei Erfolg den Task-JSON-Status zurück. Bei Fehler wird mit demselben JSON-Objekt rejected (Fehler bereits in `<output>.json` geschrieben).
 
+**Windows:** Lebensprüfung mit `tasklist`; Beenden mit `taskkill /T /F`. Spawn mit `windowsHide: true`.
+
 ### `stopTask({ cwd?, output })`
 
 Task für `output` zwangsweise stoppen: lebende `pid` aus `<output>.json` beenden, dann `status: "stopped"`, `success: false`, `pid: null` schreiben. Idempotent, wenn der Prozess bereits beendet ist. Wirft einen Fehler, wenn die Statusdatei fehlt.
