@@ -10,7 +10,7 @@ export default tseslint.config(
     ignores: ["dist/**", "node_modules/**"],
   },
   {
-    files: ["scripts/**/*.mjs", "src/**/*.mjs"],
+    files: ["scripts/**/*.mjs", "src/**/*.mjs", ".cursor/skills/**/*.mjs"],
     languageOptions: {
       globals: {
         ...globals.node,
