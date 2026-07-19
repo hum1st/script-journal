@@ -15,7 +15,7 @@ npm install script-journal
 ## クイックスタート
 
 ```ts
-import { runTask, readTaskJson, readTaskLog } from "script-journal";
+import { runTask, stopTask, readTaskJson, readTaskLog } from "script-journal";
 
 try {
   const state = await runTask({
@@ -29,6 +29,9 @@ try {
   // 失敗時は同じ JSON オブジェクトが throw される（エラーは既にファイルへ書き込み済み）
   console.error(state.error);
 }
+
+// output パスで実行中タスクを強制停止（JSON の pid を終了）
+await stopTask({ cwd: "/path/to/your-app", output: "tmp/tasks/hello" });
 
 const persisted = readTaskJson({
   cwd: "/path/to/your-app",
@@ -46,7 +49,7 @@ const log = readTaskLog({
 CommonJS：
 
 ```js
-const { runTask, readTaskJson, readTaskLog } = require("script-journal");
+const { runTask, stopTask, readTaskJson, readTaskLog } = require("script-journal");
 ```
 
 親プロセスは無出力：子の stdout/stderr はログファイルにのみ書き込まれます。
@@ -89,7 +92,7 @@ export async function run(parameters, ctx) {
 ```json
 {
   "task": "/abs/path/to/helloTask.mjs",
-  "status": "pending|running|done|failed|error",
+  "status": "pending|running|done|failed|error|stopped",
   "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
@@ -100,6 +103,8 @@ export async function run(parameters, ctx) {
   "results": {}
 }
 ```
+
+`pid` は runner が生存している間のみ設定され、タスク終了または停止時に `null` になります。
 
 ## ログファイル
 
@@ -123,7 +128,13 @@ export async function run(parameters, ctx) {
 | `parameters` | `object` | ❌ | `run(parameters, ctx)` に渡す |
 | `maxLogLines` | `number` | ❌ | 保持する最大ログ行数。超過分は先頭から削除。デフォルト `10000`。`≤0` で無効 |
 
+新しい pending 状態を書き込む前に、`runTask` は既存の `<output>.json` を読み、生存中の `pid` があれば**強制終了**します。同じ `output` を再利用する際の孤児プロセスを防ぎます。
+
 成功時はタスク JSON 状態を返す。失敗時は同じ JSON オブジェクトで reject する（エラーは既に `<output>.json` に書き込み済み）。
+
+### `stopTask({ cwd?, output })`
+
+`output` に対応するタスクを強制停止：`<output>.json` の生存 `pid` を終了し、`status: "stopped"`、`success: false`、`pid: null` を書き込む。プロセスが既に終了している場合は冪等。状態ファイルがない場合はエラーを投げる。
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 

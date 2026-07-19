@@ -1,7 +1,8 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { runTask, readTaskJson, readTaskLog } from "../src/index";
+import { runTask, stopTask, readTaskJson, readTaskLog } from "../src/index";
+import { isPidAlive } from "../src/process";
 import type { TaskState } from "../src/types";
 
 let tmpRoot: string;
@@ -67,6 +68,17 @@ export async function run(parameters, ctx) {
 }
 `
   );
+
+  fs.writeFileSync(
+    path.join(tasksDir, "sleep.mjs"),
+    `\
+export async function run(parameters) {
+  const ms = Number(parameters.ms ?? 30000);
+  await new Promise((r) => setTimeout(r, ms));
+  return { success: true };
+}
+`
+  );
 });
 
 afterAll(() => {
@@ -94,8 +106,7 @@ describe("runTask – ESM 任务成功", () => {
       results: { step: 2, echo: "world", done: true },
     });
     expect(result.task).toBe(path.join(tmpRoot, "tasks", "hello.mjs"));
-    expect(typeof result.pid).toBe("number");
-    expect(result.pid).toBeGreaterThan(0);
+    expect(result.pid).toBeNull();
     expect(result.startedAt).toBeTruthy();
     expect(result.finishedAt).toBeTruthy();
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
@@ -225,6 +236,165 @@ describe("runTask 参数校验", () => {
 
   test("缺少 output 时抛错", () => {
     expect(() => runTask({ task: "a.mjs", output: "" } as never)).toThrow(/output/);
+  });
+});
+
+describe("stopTask", () => {
+  test("缺少 output 时抛错", async () => {
+    await expect(stopTask({ output: "" } as never)).rejects.toThrow(/output/);
+  });
+
+  test("无状态文件时抛错", async () => {
+    await expect(stopTask({ cwd: tmpRoot, output: "out/no-stop-state" })).rejects.toThrow(
+      /no task state/
+    );
+  });
+
+  test("可强制停止长跑任务并写 stopped", async () => {
+    const output = "out/stop-sleep";
+    const pending = runTask({
+      cwd: tmpRoot,
+      task: "tasks/sleep.mjs",
+      output,
+      parameters: { ms: 60_000 },
+    }).then(
+      (s) => ({ ok: true as const, s }),
+      (s) => ({ ok: false as const, s })
+    );
+
+    let pid: number | null = null;
+    for (let i = 0; i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const json = readTaskJson({ cwd: tmpRoot, output });
+      if (json?.pid) {
+        pid = json.pid;
+        break;
+      }
+    }
+    expect(pid).toBeTruthy();
+    expect(isPidAlive(pid!)).toBe(true);
+
+    const state = await stopTask({ cwd: tmpRoot, output });
+    expect(state).toMatchObject({
+      status: "stopped",
+      success: false,
+      pid: null,
+      error: "stopped",
+    });
+
+    const settled = await pending;
+    expect(settled.ok).toBe(false);
+    expect(settled.s).toMatchObject({ status: "stopped" });
+    expect(isPidAlive(pid!)).toBe(false);
+  });
+
+  test("进程已退出时仍幂等收敛为 stopped", async () => {
+    const output = "out/stop-idempotent";
+    await runTask({
+      cwd: tmpRoot,
+      task: "tasks/hello.mjs",
+      output,
+    });
+    const state = await stopTask({ cwd: tmpRoot, output });
+    expect(state.status).toBe("stopped");
+    expect(state.pid).toBeNull();
+  });
+
+  test("未传 cwd 时使用 process.cwd()", async () => {
+    const output = "out/stop-cwd-default";
+    const absOutput = path.join(tmpRoot, output);
+    const prev = process.cwd();
+    process.chdir(tmpRoot);
+    try {
+      fs.mkdirSync(path.dirname(`${absOutput}.json`), { recursive: true });
+      fs.writeFileSync(
+        `${absOutput}.json`,
+        JSON.stringify({
+          task: "x",
+          status: "done",
+          pid: null,
+          startedAt: null,
+          finishedAt: null,
+          durationMs: null,
+          success: true,
+          parameters: {},
+          error: null,
+          results: null,
+        }),
+        "utf8"
+      );
+      const state = await stopTask({ output });
+      expect(state.status).toBe("stopped");
+      expect(state.durationMs).toBeNull();
+      expect(state.error).toBe("stopped");
+    } finally {
+      process.chdir(prev);
+    }
+  });
+
+  test("已有 error 时保留原错误文案", async () => {
+    const output = "out/stop-keep-error";
+    const jsonPath = path.join(tmpRoot, `${output}.json`);
+    fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+    fs.writeFileSync(
+      jsonPath,
+      JSON.stringify({
+        task: "x",
+        status: "error",
+        pid: null,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        durationMs: null,
+        success: false,
+        parameters: {},
+        error: "original boom",
+        results: null,
+      }),
+      "utf8"
+    );
+    const state = await stopTask({ cwd: tmpRoot, output });
+    expect(state.error).toBe("original boom");
+    expect(state.status).toBe("stopped");
+  });
+});
+
+describe("runTask – 启动前杀掉旧 pid", () => {
+  test("同 output 再次 runTask 会终止上一进程", async () => {
+    const output = "out/replace-sleep";
+    const first = runTask({
+      cwd: tmpRoot,
+      task: "tasks/sleep.mjs",
+      output,
+      parameters: { ms: 60_000 },
+    }).then(
+      (s) => ({ ok: true as const, s }),
+      (s) => ({ ok: false as const, s })
+    );
+
+    let oldPid: number | null = null;
+    for (let i = 0; i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const json = readTaskJson({ cwd: tmpRoot, output });
+      if (json?.pid) {
+        oldPid = json.pid;
+        break;
+      }
+    }
+    expect(oldPid).toBeTruthy();
+
+    const second = await runTask({
+      cwd: tmpRoot,
+      task: "tasks/hello.mjs",
+      output,
+      parameters: { echo: "replaced" },
+    });
+
+    expect(second.status).toBe("done");
+    expect(second.results).toMatchObject({ echo: "replaced" });
+    expect(isPidAlive(oldPid!)).toBe(false);
+
+    const settled = await first;
+    expect(settled.ok).toBe(false);
   });
 });
 

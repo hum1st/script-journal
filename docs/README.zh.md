@@ -15,7 +15,7 @@ npm install script-journal
 ## 快速开始
 
 ```ts
-import { runTask, readTaskJson, readTaskLog } from "script-journal";
+import { runTask, stopTask, readTaskJson, readTaskLog } from "script-journal";
 
 try {
   const state = await runTask({
@@ -29,6 +29,9 @@ try {
   // 失败时抛出同一份 JSON 对象（错误已写入文件）
   console.error(state.error);
 }
+
+// 按 output 强制停止仍在运行的任务（读取 JSON 中的 pid 并终止）
+await stopTask({ cwd: "/path/to/your-app", output: "tmp/tasks/hello" });
 
 const persisted = readTaskJson({
   cwd: "/path/to/your-app",
@@ -46,7 +49,7 @@ const log = readTaskLog({
 CommonJS：
 
 ```js
-const { runTask, readTaskJson, readTaskLog } = require("script-journal");
+const { runTask, stopTask, readTaskJson, readTaskLog } = require("script-journal");
 ```
 
 父进程保持静默：子进程 stdout/stderr 仅写入日志文件，不打印到控制台。
@@ -89,7 +92,7 @@ export async function run(parameters, ctx) {
 ```json
 {
   "task": "/abs/path/to/helloTask.mjs",
-  "status": "pending|running|done|failed|error",
+  "status": "pending|running|done|failed|error|stopped",
   "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
@@ -100,6 +103,8 @@ export async function run(parameters, ctx) {
   "results": {}
 }
 ```
+
+`pid` 仅在 runner 存活期间有值；任务结束或被 `stopTask` 后置为 `null`。
 
 ## 日志文件
 
@@ -123,7 +128,13 @@ export async function run(parameters, ctx) {
 | `parameters` | `object` | ❌ | 传给 `run(parameters, ctx)` |
 | `maxLogLines` | `number` | ❌ | 日志最多保留行数，超出从头部删除。默认 `10000`；`≤0` 表示不裁剪 |
 
+写入新的 pending 状态之前，`runTask` 会读取已有 `<output>.json`，若其中 `pid` 仍存活则**强制终止**，避免同 `output` 复用时留下孤儿进程。
+
 成功时返回任务 JSON 状态；失败时以同一份 JSON 对象 reject（错误已写入 `<output>.json`）。
+
+### `stopTask({ cwd?, output })`
+
+强制停止 `output` 对应任务：若 JSON 中的 `pid` 仍存活则终止，并将状态写为 `status: "stopped"`、`success: false`、`pid: null`。进程已退出时幂等收敛。无状态文件时抛错。
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 

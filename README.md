@@ -15,7 +15,7 @@ npm install script-journal
 ## Quick start
 
 ```ts
-import { runTask, readTaskJson, readTaskLog } from "script-journal";
+import { runTask, stopTask, readTaskJson, readTaskLog } from "script-journal";
 
 try {
   const state = await runTask({
@@ -29,6 +29,9 @@ try {
   // on failure, the same JSON object is thrown (error already written to file)
   console.error(state.error);
 }
+
+// Force-stop a running task by its output path (kills pid from JSON if still alive)
+await stopTask({ cwd: "/path/to/your-app", output: "tmp/tasks/hello" });
 
 const persisted = readTaskJson({
   cwd: "/path/to/your-app",
@@ -46,7 +49,7 @@ const log = readTaskLog({
 CommonJS:
 
 ```js
-const { runTask, readTaskJson, readTaskLog } = require("script-journal");
+const { runTask, stopTask, readTaskJson, readTaskLog } = require("script-journal");
 ```
 
 Parent process stays silent: child stdout/stderr are captured into the log file only.
@@ -89,7 +92,7 @@ Written to `<output>.json`:
 ```json
 {
   "task": "/abs/path/to/helloTask.mjs",
-  "status": "pending|running|done|failed|error",
+  "status": "pending|running|done|failed|error|stopped",
   "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
@@ -100,6 +103,8 @@ Written to `<output>.json`:
   "results": {}
 }
 ```
+
+`pid` is set while the runner is alive and cleared (`null`) when the task finishes or is stopped.
 
 ## Log file
 
@@ -123,7 +128,13 @@ When the log exceeds `maxLogLines` (default **10000**), older lines are deleted 
 | `parameters` | `object` | ❌ | Passed to `run(parameters, ctx)` |
 | `maxLogLines` | `number` | ❌ | Max retained log lines; older lines dropped from head. Default `10000`. `≤0` disables |
 
+Before writing a new pending state, `runTask` reads any existing `<output>.json` and **force-terminates** a still-alive `pid` (if present). This prevents orphan runners when the same `output` is reused.
+
 Returns the task JSON state on success. On failure, rejects with that same JSON object (error is already persisted to `<output>.json`).
+
+### `stopTask({ cwd?, output })`
+
+Force-stop the task for `output`: terminate a live `pid` from `<output>.json`, then write `status: "stopped"`, `success: false`, `pid: null`. Idempotent if the process is already gone. Throws if the state file is missing.
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 

@@ -89,6 +89,17 @@ function makeLogger() {
   };
 }
 
+function finalize(state, startedAt, patch) {
+  const finishedAt = new Date().toISOString();
+  Object.assign(state, {
+    ...patch,
+    finishedAt,
+    durationMs: Date.now() - new Date(startedAt).getTime(),
+    pid: null,
+  });
+  writeState(state);
+}
+
 async function main() {
   const stored = readJson();
   const parameters = stored.parameters ?? {};
@@ -108,17 +119,24 @@ async function main() {
   };
   writeState(state);
 
+  let exiting = false;
+  function onStopSignal() {
+    if (exiting) return;
+    exiting = true;
+    finalize(state, startedAt, {
+      status: "stopped",
+      success: false,
+      error: state.error ?? "stopped",
+    });
+    process.exit(1);
+  }
+  process.on("SIGTERM", onStopSignal);
+  process.on("SIGINT", onStopSignal);
+
   if (!existsSync(taskPath)) {
     const msg = `Cannot find task file: ${taskPath}`;
     process.stderr.write(`[ERROR] ${msg}\n`);
-    Object.assign(state, {
-      status: "error",
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - new Date(startedAt).getTime(),
-      success: false,
-      error: msg,
-    });
-    writeState(state);
+    finalize(state, startedAt, { status: "error", success: false, error: msg });
     process.exit(1);
   }
 
@@ -128,14 +146,7 @@ async function main() {
   } catch (e) {
     const msg = `Cannot load task file "${taskPath}": ${e.message}`;
     process.stderr.write(`[ERROR] ${msg}\n`);
-    Object.assign(state, {
-      status: "error",
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - new Date(startedAt).getTime(),
-      success: false,
-      error: msg,
-    });
-    writeState(state);
+    finalize(state, startedAt, { status: "error", success: false, error: msg });
     process.exit(1);
   }
 
@@ -143,14 +154,7 @@ async function main() {
   if (typeof run !== "function") {
     const msg = `Task file "${taskPath}" does not export a run() function`;
     process.stderr.write(`[ERROR] ${msg}\n`);
-    Object.assign(state, {
-      status: "error",
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - new Date(startedAt).getTime(),
-      success: false,
-      error: msg,
-    });
-    writeState(state);
+    finalize(state, startedAt, { status: "error", success: false, error: msg });
     process.exit(1);
   }
 
@@ -178,19 +182,13 @@ async function main() {
   } catch (e) {
     const msg = e.message ?? String(e);
     process.stderr.write(`[ERROR] task threw: ${msg}\n`);
-    Object.assign(state, {
-      status: "error",
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - new Date(startedAt).getTime(),
-      success: false,
-      error: msg,
-    });
-    writeState(state);
+    finalize(state, startedAt, { status: "error", success: false, error: msg });
     process.exit(1);
   }
 
+  if (exiting) return;
+
   const success = taskResults?.success ?? true;
-  const finishedAt = new Date().toISOString();
 
   if (taskResults != null) {
     const { success: _ignoredSuccess, error, ...resultPatch } = taskResults;
@@ -200,13 +198,10 @@ async function main() {
     if (error != null) state.error = error;
   }
 
-  Object.assign(state, {
+  finalize(state, startedAt, {
     status: success ? "done" : "failed",
-    finishedAt,
-    durationMs: Date.now() - new Date(startedAt).getTime(),
     success,
   });
-  writeState(state);
 
   process.exit(success ? 0 : 1);
 }

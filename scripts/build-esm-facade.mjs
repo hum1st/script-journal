@@ -22,6 +22,7 @@ writeFileSync(
  */
 export {
   runTask,
+  stopTask,
   readTaskJson,
   readTaskLog,
   appendLogLine,
@@ -36,6 +37,7 @@ writeFileSync(
   join(esmDir, "index.d.ts"),
   `export {
   runTask,
+  stopTask,
   readTaskJson,
   readTaskLog,
   appendLogLine,

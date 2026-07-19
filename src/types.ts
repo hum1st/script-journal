@@ -1,5 +1,5 @@
 /** 任务运行状态 */
-export type TaskStatus = "pending" | "running" | "done" | "failed" | "error";
+export type TaskStatus = "pending" | "running" | "done" | "failed" | "error" | "stopped";
 
 /** 日志级别 */
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -9,7 +9,7 @@ export interface TaskState {
   /** 任务文件路径（解析后的绝对路径） */
   task: string;
   status: TaskStatus;
-  /** 任务子进程 PID；未启动或 spawn 失败时为 null */
+  /** 任务子进程 PID；运行中为 runner pid，结束后 / 未启动 / spawn 失败时为 null */
   pid: number | null;
   startedAt: string | null;
   finishedAt: string | null;

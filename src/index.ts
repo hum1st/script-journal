@@ -1,4 +1,5 @@
 export { runTask } from "./handler";
+export { stopTask } from "./stopTask";
 export {
   appendChunkAsLines,
   appendLogLine,

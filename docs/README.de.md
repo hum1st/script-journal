@@ -15,7 +15,7 @@ npm install script-journal
 ## Schnellstart
 
 ```ts
-import { runTask, readTaskJson, readTaskLog } from "script-journal";
+import { runTask, stopTask, readTaskJson, readTaskLog } from "script-journal";
 
 try {
   const state = await runTask({
@@ -29,6 +29,9 @@ try {
   // bei Fehler wird dasselbe JSON-Objekt geworfen (Fehler bereits in Datei geschrieben)
   console.error(state.error);
 }
+
+// Laufenden Task anhand des output-Pfads zwangsweise beenden (pid aus JSON töten)
+await stopTask({ cwd: "/path/to/your-app", output: "tmp/tasks/hello" });
 
 const persisted = readTaskJson({
   cwd: "/path/to/your-app",
@@ -46,7 +49,7 @@ const log = readTaskLog({
 CommonJS:
 
 ```js
-const { runTask, readTaskJson, readTaskLog } = require("script-journal");
+const { runTask, stopTask, readTaskJson, readTaskLog } = require("script-journal");
 ```
 
 Der Elternprozess bleibt still: stdout/stderr des Kindes werden nur in die Logdatei geschrieben.
@@ -89,7 +92,7 @@ Geschrieben nach `<output>.json`:
 ```json
 {
   "task": "/abs/path/to/helloTask.mjs",
-  "status": "pending|running|done|failed|error",
+  "status": "pending|running|done|failed|error|stopped",
   "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
@@ -100,6 +103,8 @@ Geschrieben nach `<output>.json`:
   "results": {}
 }
 ```
+
+`pid` ist gesetzt, solange der Runner läuft, und wird (`null`) gelöscht, wenn die Aufgabe endet oder gestoppt wird.
 
 ## Logdatei
 
@@ -123,7 +128,13 @@ Geschrieben nach `<output>.json`:
 | `parameters` | `object` | ❌ | Wird an `run(parameters, ctx)` übergeben |
 | `maxLogLines` | `number` | ❌ | Max. behaltene Logzeilen; ältere am Anfang entfernt. Standard `10000`. `≤0` deaktiviert |
 
+Bevor ein neuer pending-Status geschrieben wird, liest `runTask` vorhandenes `<output>.json` und **beendet zwangsweise** eine noch lebende `pid` (falls vorhanden). So entstehen keine verwaisten Runner bei Wiederverwendung desselben `output`.
+
 Gibt bei Erfolg den Task-JSON-Status zurück. Bei Fehler wird mit demselben JSON-Objekt rejected (Fehler bereits in `<output>.json` geschrieben).
+
+### `stopTask({ cwd?, output })`
+
+Task für `output` zwangsweise stoppen: lebende `pid` aus `<output>.json` beenden, dann `status: "stopped"`, `success: false`, `pid: null` schreiben. Idempotent, wenn der Prozess bereits beendet ist. Wirft einen Fehler, wenn die Statusdatei fehlt.
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 

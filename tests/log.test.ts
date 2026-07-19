@@ -174,4 +174,44 @@ describe("readTaskLog", () => {
     expect(result.totalPages).toBe(1);
     expect(result.entries).toEqual([]);
   });
+
+  test("stat 成功但读取失败时 exists 为 true 且 entries 为空", () => {
+    // 用同名目录模拟：stat 成功，readFileSync 抛 EISDIR
+    const file = path.join(tmpDir, `${output}.log`);
+    fs.rmSync(file, { force: true });
+    fs.mkdirSync(file);
+    const result = readTaskLog({ cwd: tmpDir, output });
+    expect(result.exists).toBe(true);
+    expect(result.sizeBytes).toBeGreaterThanOrEqual(0);
+    expect(result.entries).toEqual([]);
+    expect(result.totalLines).toBe(0);
+  });
+
+  test("未传 cwd 时使用 process.cwd()", () => {
+    const prev = process.cwd();
+    process.chdir(tmpDir);
+    try {
+      const result = readTaskLog({ output, pageSize: 2 });
+      expect(result.exists).toBe(true);
+      expect(result.totalLines).toBe(5);
+    } finally {
+      process.chdir(prev);
+    }
+  });
+});
+
+describe("trimLogFile – 写回失败", () => {
+  test("目标不可写时仍返回 kept 行数", () => {
+    for (let i = 0; i < 5; i++) {
+      appendLogLine(logPath, `line-${i}`, "info");
+    }
+    fs.chmodSync(logPath, 0o444);
+    fs.chmodSync(tmpDir, 0o555);
+    try {
+      expect(trimLogFile(logPath, 2)).toBe(2);
+    } finally {
+      fs.chmodSync(tmpDir, 0o755);
+      fs.chmodSync(logPath, 0o644);
+    }
+  });
 });

@@ -15,7 +15,7 @@ npm install script-journal
 ## Démarrage rapide
 
 ```ts
-import { runTask, readTaskJson, readTaskLog } from "script-journal";
+import { runTask, stopTask, readTaskJson, readTaskLog } from "script-journal";
 
 try {
   const state = await runTask({
@@ -29,6 +29,9 @@ try {
   // en cas d'échec, le même objet JSON est rejeté (erreur déjà écrite dans le fichier)
   console.error(state.error);
 }
+
+// Arrêter de force une tâche en cours via son chemin output (tue le pid du JSON)
+await stopTask({ cwd: "/path/to/your-app", output: "tmp/tasks/hello" });
 
 const persisted = readTaskJson({
   cwd: "/path/to/your-app",
@@ -46,7 +49,7 @@ const log = readTaskLog({
 CommonJS :
 
 ```js
-const { runTask, readTaskJson, readTaskLog } = require("script-journal");
+const { runTask, stopTask, readTaskJson, readTaskLog } = require("script-journal");
 ```
 
 Le processus parent reste silencieux : stdout/stderr de l’enfant sont uniquement écrits dans le fichier de log.
@@ -89,7 +92,7 @@ Code de sortie : `0` en cas de succès, sinon `1`.
 ```json
 {
   "task": "/abs/path/to/helloTask.mjs",
-  "status": "pending|running|done|failed|error",
+  "status": "pending|running|done|failed|error|stopped",
   "pid": 12345,
   "startedAt": "ISO|null",
   "finishedAt": "ISO|null",
@@ -100,6 +103,8 @@ Code de sortie : `0` en cas de succès, sinon `1`.
   "results": {}
 }
 ```
+
+`pid` est défini tant que le runner est vivant, et remis à `null` lorsque la tâche se termine ou est arrêtée.
 
 ## Fichier de log
 
@@ -123,7 +128,13 @@ Lorsque le log dépasse `maxLogLines` (défaut **10000**), les anciennes lignes 
 | `parameters` | `object` | ❌ | Passé à `run(parameters, ctx)` |
 | `maxLogLines` | `number` | ❌ | Nombre max de lignes de log conservées ; les plus anciennes sont retirées en tête. Défaut `10000`. `≤0` désactive |
 
+Avant d’écrire un nouvel état pending, `runTask` lit tout `<output>.json` existant et **termine de force** un `pid` encore vivant (s’il existe). Cela évite les runners orphelins lors de la réutilisation du même `output`.
+
 En cas de succès, renvoie l'état JSON de la tâche. En cas d'échec, rejette avec ce même objet JSON (erreur déjà persistée dans `<output>.json`).
+
+### `stopTask({ cwd?, output })`
+
+Arrêter de force la tâche pour `output` : terminer un `pid` vivant depuis `<output>.json`, puis écrire `status: "stopped"`, `success: false`, `pid: null`. Idempotent si le processus est déjà terminé. Lève une erreur si le fichier d’état est absent.
 
 ### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 
