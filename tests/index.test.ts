@@ -1,154 +1,216 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { runScript } from "../src/index";
+import { runTask, readTaskJson, readTaskLog } from "../src/index";
 
-// ─── 测试用脚本 fixture（写入 tmp 文件） ────────────────────────────────────
-
-let tmpDir: string;
-let successScript: string;
-let errorScript: string;
-let syncScript: string;
+let tmpRoot: string;
+let tasksDir: string;
 
 beforeAll(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "script-journal-test-"));
+  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "script-journal-"));
+  tasksDir = path.join(tmpRoot, "tasks");
+  fs.mkdirSync(tasksDir, { recursive: true });
 
-  // 成功脚本：返回一个对象（使用 CJS 格式，兼容 Jest/ts-jest 环境）
-  successScript = path.join(tmpDir, "success.js");
   fs.writeFileSync(
-    successScript,
-    `module.exports = async function() { return { hello: "world", ts: Date.now() }; };\n`
+    path.join(tasksDir, "hello.mjs"),
+    `\
+export async function run(parameters, ctx) {
+  ctx.logger.info("hello start");
+  ctx.patchResults({ step: 1, echo: parameters.echo ?? null });
+  ctx.logger.debug("debug line");
+  ctx.patchResults({ step: 2 });
+  return { success: true, done: true };
+}
+`
   );
 
-  // 失败脚本：抛出异常
-  errorScript = path.join(tmpDir, "error.js");
   fs.writeFileSync(
-    errorScript,
-    `module.exports = async function() { throw new Error("intentional failure"); };\n`
+    path.join(tasksDir, "failSoft.mjs"),
+    `\
+export async function run(_parameters, ctx) {
+  ctx.logger.warn("about to fail soft");
+  return { success: false, error: "soft failure", code: 42 };
+}
+`
   );
 
-  // 同步脚本：同步函数（非 async）
-  syncScript = path.join(tmpDir, "sync.js");
   fs.writeFileSync(
-    syncScript,
-    `module.exports = function() { return 42; };\n`
+    path.join(tasksDir, "throw.mjs"),
+    `\
+export async function run() {
+  throw new Error("boom");
+}
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tasksDir, "cjsDemo.cjs"),
+    `\
+exports.run = async function run(parameters, ctx) {
+  ctx.logger.info("cjs ok");
+  ctx.patchResults({ from: "cjs", n: parameters.n });
+  return { success: true };
+};
+`
+  );
+
+  fs.writeFileSync(
+    path.join(tasksDir, "spam.mjs"),
+    `\
+export async function run(parameters, ctx) {
+  const n = Number(parameters.n ?? 0);
+  for (let i = 0; i < n; i++) {
+    ctx.logger.info("line-" + i);
+  }
+  return { success: true };
+}
+`
   );
 });
 
 afterAll(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-// ─── 测试 ────────────────────────────────────────────────────────────────────
-
-describe("runScript – success case", () => {
-  let root: string;
-  let result: Awaited<ReturnType<typeof runScript>>;
+describe("runTask – ESM 任务成功", () => {
+  const output = "out/hello";
+  let result: Awaited<ReturnType<typeof runTask>>;
 
   beforeAll(async () => {
-    root = path.join(tmpDir, "out-success");
-    result = await runScript(successScript, { root, filePath: "data/result" });
+    result = await runTask({
+      cwd: tmpRoot,
+      task: "tasks/hello.mjs",
+      output,
+      parameters: { echo: "world" },
+    });
   });
 
-  test("returns success=true", () => {
-    expect(result.success).toBe(true);
+  test("退出码为 0", () => {
+    expect(result.exitCode).toBe(0);
   });
 
-  test("data matches script return value", () => {
-    expect(result.data).toMatchObject({ hello: "world" });
+  test("JSON 状态为 done 且包含 results", () => {
+    const state = readTaskJson({ cwd: tmpRoot, output });
+    expect(state).toMatchObject({
+      status: "done",
+      success: true,
+      parameters: { echo: "world" },
+      results: { step: 2, echo: "world", done: true },
+    });
+    expect(state?.task).toBe(path.join(tmpRoot, "tasks", "hello.mjs"));
+    expect(state?.startedAt).toBeTruthy();
+    expect(state?.finishedAt).toBeTruthy();
+    expect(state?.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  test("json file is created with correct content", () => {
-    expect(fs.existsSync(result.jsonPath)).toBe(true);
-    const parsed = JSON.parse(fs.readFileSync(result.jsonPath, "utf8"));
-    expect(parsed.success).toBe(true);
-    expect(parsed.data).toMatchObject({ hello: "world" });
+  test("日志为带级别的 NDJSON", () => {
+    const log = readTaskLog({ cwd: tmpRoot, output });
+    expect(log.exists).toBe(true);
+    expect(log.totalLines).toBeGreaterThan(0);
+    const messages = log.entries.map((e) => e.message);
+    expect(messages.some((m) => m.includes("hello start"))).toBe(true);
+    expect(log.entries.some((e) => e.level === "info")).toBe(true);
+    expect(log.entries.some((e) => e.level === "debug")).toBe(true);
   });
 
-  test("log file is created and contains expected markers", () => {
-    expect(fs.existsSync(result.logPath)).toBe(true);
-    const log = fs.readFileSync(result.logPath, "utf8");
-    expect(log).toContain("START");
-    expect(log).toContain("DONE");
-    expect(log).toContain("WROTE");
-  });
-
-  test("jsonPath resolves under root/data/result.json", () => {
-    expect(result.jsonPath).toBe(path.join(root, "data", "result.json"));
-  });
-
-  test("logPath resolves under root/data/result.log", () => {
-    expect(result.logPath).toBe(path.join(root, "data", "result.log"));
-  });
-
-  test("durationMs is a non-negative number", () => {
-    expect(result.durationMs).toBeGreaterThanOrEqual(0);
-  });
-});
-
-describe("runScript – error case", () => {
-  let root: string;
-  let result: Awaited<ReturnType<typeof runScript>>;
-
-  beforeAll(async () => {
-    root = path.join(tmpDir, "out-error");
-    result = await runScript(errorScript, { root });
-  });
-
-  test("returns success=false", () => {
-    expect(result.success).toBe(false);
-  });
-
-  test("error field contains the thrown message", () => {
-    expect(result.error).toContain("intentional failure");
-  });
-
-  test("json file records failure", () => {
-    const parsed = JSON.parse(fs.readFileSync(result.jsonPath, "utf8"));
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain("intentional failure");
-  });
-
-  test("log file contains ERROR marker", () => {
-    const log = fs.readFileSync(result.logPath, "utf8");
-    expect(log).toContain("ERROR");
-  });
-
-  test("default filePath produces output.json", () => {
-    expect(result.jsonPath).toBe(path.join(root, "output.json"));
+  test("产出路径解析在 cwd 下", () => {
+    expect(result.jsonPath).toBe(path.join(tmpRoot, "out", "hello.json"));
+    expect(result.logPath).toBe(path.join(tmpRoot, "out", "hello.log"));
   });
 });
 
-describe("runScript – sync script", () => {
-  let result: Awaited<ReturnType<typeof runScript>>;
-
-  beforeAll(async () => {
-    const root = path.join(tmpDir, "out-sync");
-    result = await runScript(syncScript, { root, filePath: "sync-result" });
-  });
-
-  test("handles synchronous default export function", () => {
-    expect(result.success).toBe(true);
-    expect(result.data).toBe(42);
+describe("runTask – 软失败", () => {
+  test("status 为 failed 且退出码为 1", async () => {
+    const output = "out/fail-soft";
+    const { exitCode } = await runTask({
+      cwd: tmpRoot,
+      task: path.join(tasksDir, "failSoft.mjs"),
+      output,
+    });
+    expect(exitCode).toBe(1);
+    const state = readTaskJson({ cwd: tmpRoot, output });
+    expect(state?.status).toBe("failed");
+    expect(state?.success).toBe(false);
+    expect(state?.error).toBe("soft failure");
+    expect(state?.results).toMatchObject({ code: 42 });
   });
 });
 
-describe("runScript – old files are cleaned before run", () => {
-  test("overwrites stale json and log from previous run", async () => {
-    const root = path.join(tmpDir, "out-clean");
-    const fp = "clean";
+describe("runTask – 抛出异常", () => {
+  test("status 为 error", async () => {
+    const output = "out/throw";
+    const { exitCode } = await runTask({
+      cwd: tmpRoot,
+      task: "tasks/throw.mjs",
+      output,
+    });
+    expect(exitCode).toBe(1);
+    const state = readTaskJson({ cwd: tmpRoot, output });
+    expect(state?.status).toBe("error");
+    expect(state?.success).toBe(false);
+    expect(state?.error).toContain("boom");
+  });
+});
 
-    // 先写入一次
-    await runScript(successScript, { root, filePath: fp });
+describe("runTask – CJS 任务模块", () => {
+  test("能加载并执行 .cjs", async () => {
+    const output = "out/cjs-demo";
+    const { exitCode } = await runTask({
+      cwd: tmpRoot,
+      task: "tasks/cjsDemo.cjs",
+      output,
+      parameters: { n: 7 },
+    });
+    expect(exitCode).toBe(0);
+    const state = readTaskJson({ cwd: tmpRoot, output });
+    expect(state?.results).toMatchObject({ from: "cjs", n: 7 });
+  });
+});
 
-    // 篡改 json 文件内容
-    const jsonPath = path.join(root, fp + ".json");
-    fs.writeFileSync(jsonPath, '{"stale":true}', "utf8");
+describe("runTask – 任务文件不存在", () => {
+  test("status 为 error", async () => {
+    const output = "out/missing";
+    const { exitCode } = await runTask({
+      cwd: tmpRoot,
+      task: "tasks/no-such.mjs",
+      output,
+    });
+    expect(exitCode).toBe(1);
+    const state = readTaskJson({ cwd: tmpRoot, output });
+    expect(state?.status).toBe("error");
+    expect(state?.error).toMatch(/Cannot find task file/);
+  });
+});
 
-    // 再执行一次，应该覆盖
-    const result2 = await runScript(successScript, { root, filePath: fp });
-    const parsed = JSON.parse(fs.readFileSync(result2.jsonPath, "utf8"));
-    expect(parsed.stale).toBeUndefined();
-    expect(parsed.success).toBe(true);
+describe("runTask – maxLogLines 集成", () => {
+  test("执行过程中裁剪最旧日志行", async () => {
+    const output = "out/spam";
+    const maxLogLines = 20;
+    const { logPath } = await runTask({
+      cwd: tmpRoot,
+      task: "tasks/spam.mjs",
+      output,
+      parameters: { n: 50 },
+      maxLogLines,
+    });
+
+    const raw = fs.readFileSync(logPath, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    expect(lines.length).toBeLessThanOrEqual(maxLogLines);
+
+    const log = readTaskLog({ cwd: tmpRoot, output, pageSize: maxLogLines });
+    const messages = log.entries.map((e) => e.message);
+    expect(messages.some((m) => m === "line-0")).toBe(false);
+    expect(messages.some((m) => m === "line-49")).toBe(true);
+  });
+});
+
+describe("runTask 参数校验", () => {
+  test("缺少 task 时抛错", () => {
+    expect(() => runTask({ task: "", output: "x" } as never)).toThrow(/task/);
+  });
+
+  test("缺少 output 时抛错", () => {
+    expect(() => runTask({ task: "a.mjs", output: "" } as never)).toThrow(/output/);
   });
 });

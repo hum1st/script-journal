@@ -1,0 +1,8 @@
+---
+description: 基本规则
+alwaysApply: true
+---
+
+- 测试描述、代码注释、skill、commit等对内描述性文本使用中文
+- 根目录 README.md 使用英文
+- 修改 README 时同步翻译 docs/README.{de,es,fr,ja,zh}.md

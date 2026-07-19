@@ -1,6 +1,8 @@
 # script-journal
 
-Führt ein JS-Skriptmodul aus, schreibt die zurückgegebenen Daten in eine JSON-Datei und das Ausführungsprotokoll in eine Log-Datei.
+Führt ein Task-Modul in einem Kindprozess aus, persistiert den JSON-Status und erfasst NDJSON-Logs. Host-Apps schreiben nur Tasks; Ausführung, Status und Log-I/O übernimmt diese Bibliothek.
+
+Funktioniert für **ESM**- und **CommonJS**-Konsumenten. Task-Dateien können `.mjs`, `.js` oder `.cjs` sein.
 
 **Andere Sprachen:** [English](../README.md) | [中文](README.zh.md) | [Español](README.es.md) | [Français](README.fr.md) | [日本語](README.ja.md)
 
@@ -10,71 +12,118 @@ Führt ein JS-Skriptmodul aus, schreibt die zurückgegebenen Daten in eine JSON-
 npm install script-journal
 ```
 
-## Verwendung
+## Schnellstart
 
 ```ts
-import { runScript } from "script-journal";
+import { runTask, readTaskJson, readTaskLog } from "script-journal";
 
-const result = await runScript("/path/to/my-task.mjs", {
-  root: "/output",
-  filePath: "reports/daily", // optional, Standard: "output"
+const { exitCode, jsonPath, logPath } = await runTask({
+  cwd: "/path/to/your-app", // optional, Standard: process.cwd()
+  task: "src/tasks/updateRegistriesTask.mjs", // absolut oder relativ zu cwd
+  output: "tmp/tasks/update-registries", // absolut oder relativ zu cwd (ohne Erweiterung)
+  parameters: { registries: ["foo"] },
 });
 
-// Ausgabedateien:
-//   /output/reports/daily.json  ← Rückgabewert des Skripts
-//   /output/reports/daily.log   ← Ausführungsprotokoll
+const state = readTaskJson({
+  cwd: "/path/to/your-app",
+  output: "tmp/tasks/update-registries",
+});
+
+// Standard: tail=true (neueste Seiten). totalLines ist durch maxLogLines begrenzt.
+const log = readTaskLog({
+  cwd: "/path/to/your-app",
+  output: "tmp/tasks/update-registries",
+  pageSize: 50,
+});
 ```
 
-### Skriptformat
-
-Das Skript muss eine Funktion als `default export` bereitstellen (sync oder async). Der Rückgabewert wird als JSON gespeichert:
+CommonJS:
 
 ```js
-// my-task.mjs
-export default async function () {
-  const data = await fetchSomething();
-  return data;
+const { runTask, readTaskJson, readTaskLog } = require("script-journal");
+```
+
+Der Elternprozess bleibt still: stdout/stderr des Kindes werden nur in die Logdatei geschrieben.
+
+## Task-Modul-Vertrag
+
+```js
+// src/tasks/updateRegistriesTask.mjs
+export async function run(parameters, ctx) {
+  ctx.logger.info("sync started");
+  ctx.patchResults({ total: 0, failed: 0 });
+
+  // ... Arbeit mit parameters ...
+
+  ctx.patchResults({ total: 3 });
+  return { success: true }; // oder { success: false, error: "..." }
 }
 ```
 
-CommonJS-Format wird ebenfalls unterstützt:
+### `ctx`
 
-```js
-// my-task.js
-module.exports = async function () {
-  return { status: "ok", timestamp: Date.now() };
-};
+| Feld | Beschreibung |
+|---|---|
+| `logger.debug/info/warn/error(msg)` | Schreibt `[LEVEL] msg`; wird als NDJSON-Log erfasst |
+| `results` | Aktuelles results-Objekt (gemeinsame Referenz) |
+| `updateResults(patch)` | Flache Zusammenführung in `results` und JSON persistieren |
+| `patchResults(patch)` | Gleiche Zusammenführung, gibt `results` zurück |
+
+### Rückgabewert
+
+- `undefined` / `null` — über `patchResults` angesammelte results behalten
+- Objekt — flach in `results` zusammengeführt; `success` entscheidet done/failed; `error` → `state.error`
+
+Exit-Code: `0` bei Erfolg, sonst `1`.
+
+## Status-JSON
+
+Geschrieben nach `<output>.json`:
+
+```json
+{
+  "task": "/abs/path/to/updateRegistriesTask.mjs",
+  "status": "pending|running|done|failed|error",
+  "startedAt": "ISO|null",
+  "finishedAt": "ISO|null",
+  "durationMs": 0,
+  "success": true,
+  "parameters": {},
+  "error": null,
+  "results": {}
+}
 ```
+
+## Logdatei
+
+`<output>.log` — ein NDJSON-Objekt pro Zeile:
+
+```json
+{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"sync started"}
+```
+
+Überschreitet das Log `maxLogLines` (Standard **10000**), werden ältere Zeilen am Anfang gelöscht, sodass nur die neuesten bleiben. Mit `maxLogLines: 0` wird das Trimmen deaktiviert.
 
 ## API
 
-### `runScript(scriptFile, options)`
+### `runTask(options)`
 
-#### Parameter
-
-| Parameter | Typ | Pflicht | Beschreibung |
+| Feld | Typ | Pflicht | Beschreibung |
 |---|---|---|---|
-| `scriptFile` | `string` | ✅ | Absoluter Pfad zur auszuführenden Skriptdatei |
-| `options.root` | `string` | ✅ | Ausgabe-Stammverzeichnis |
-| `options.filePath` | `string` | ❌ | Relativer Pfad (ohne Erweiterung), Unterverzeichnisse möglich, Standard: `"output"` |
+| `cwd` | `string` | ❌ | Arbeitsverzeichnis, Standard `process.cwd()` |
+| `task` | `string` | ✅ | Task-Dateipfad (absolut oder relativ zu `cwd`) |
+| `output` | `string` | ✅ | Ausgabe-Basispfad ohne Erweiterung (absolut oder relativ zu `cwd`) |
+| `parameters` | `object` | ❌ | Wird an `run(parameters, ctx)` übergeben |
+| `maxLogLines` | `number` | ❌ | Max. behaltene Logzeilen; ältere am Anfang entfernt. Standard `10000`. `≤0` deaktiviert |
 
-#### Rückgabewert `ScriptJournalResult<T>`
+Rückgabe: `{ exitCode, jsonPath, logPath }`.
 
-| Feld | Typ | Beschreibung |
-|---|---|---|
-| `success` | `boolean` | Ob das Skript erfolgreich ausgeführt wurde |
-| `data` | `T` | Rückgabewert der Skriptfunktion (nur bei `success=true`) |
-| `error` | `string` | Fehlermeldung/Stack (nur bei `success=false`) |
-| `startedAt` | `string` | Startzeit (ISO-String) |
-| `finishedAt` | `string` | Endzeit (ISO-String) |
-| `durationMs` | `number` | Ausführungsdauer in Millisekunden |
-| `jsonPath` | `string` | Absoluter Pfad zur JSON-Ausgabedatei |
-| `logPath` | `string` | Absoluter Pfad zur Log-Ausgabedatei |
+### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 
-### Datei-Bereinigung
+Dieselben Auflösungsregeln für `cwd` / `output` wie bei `runTask`.
 
-Vor jeder Ausführung werden bestehende `.json`- und `.log`-Dateien am angegebenen Pfad **automatisch gelöscht**, sodass jede Ausführung saubere Ergebnisse liefert.
+`readTaskLog` verwendet standardmäßig `tail: true` (neueste Seiten). Mit `tail: false` vom Anfang lesen.
 
-## Lizenz
+## License
 
 MIT

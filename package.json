@@ -1,7 +1,7 @@
 {
   "name": "script-journal",
-  "version": "1.0.1",
-  "description": "Run a JS script module, write its returned data to a JSON file and execution logs to a log file",
+  "version": "1.2.0",
+  "description": "Task journal: run named task modules in a child process with JSON status and NDJSON logs (ESM/CJS)",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "dist/cjs/index.d.ts",
@@ -22,14 +22,14 @@
   ],
   "scripts": {
     "init": "npm i",
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.esm.json",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/build-esm-facade.mjs && cp src/runner.mjs dist/runner.mjs",
     "build:watch": "tsc --watch",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build",
-    "test": "jest",
+    "prepublishOnly": "npm run build",
+    "test": "npm run build && jest",
     "test:watch": "jest --watch",
-    "lint": "eslint src tests",
-    "lint:fix": "eslint src tests --fix",
+    "lint": "eslint src tests scripts",
+    "lint:fix": "eslint src tests scripts --fix",
     "prepare": "husky",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
@@ -46,12 +46,13 @@
     "url": "git+https://github.com/hum1st/script-journal.git"
   },
   "keywords": [
-    "script",
-    "runner",
-    "json",
-    "log",
     "task",
-    "journal"
+    "runner",
+    "journal",
+    "status",
+    "log",
+    "ndjson",
+    "subprocess"
   ],
   "author": "hum1st",
   "license": "MIT",

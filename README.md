@@ -1,6 +1,8 @@
 # script-journal
 
-Run a JS script module, write its returned data to a JSON file, and record the execution process to a log file.
+Run a task module in a child process, persist JSON status, and capture NDJSON logs. Host apps only author tasks; this library owns execution, status, and log I/O.
+
+Works from both **ESM** and **CommonJS** consumers. Task files may be `.mjs`, `.js`, or `.cjs`.
 
 **Other languages:** [中文](docs/README.zh.md) | [Deutsch](docs/README.de.md) | [Español](docs/README.es.md) | [Français](docs/README.fr.md) | [日本語](docs/README.ja.md)
 
@@ -10,80 +12,118 @@ Run a JS script module, write its returned data to a JSON file, and record the e
 npm install script-journal
 ```
 
-## Usage
+## Quick start
 
 ```ts
-import { runScript } from "script-journal";
+import { runTask, readTaskJson, readTaskLog } from "script-journal";
 
-const result = await runScript("/path/to/my-task.mjs", {
-  root: "/output",
-  filePath: "reports/daily", // optional, defaults to "output"
+const { exitCode, jsonPath, logPath } = await runTask({
+  cwd: "/path/to/your-app", // optional, default process.cwd()
+  task: "src/tasks/updateRegistriesTask.mjs", // absolute or relative to cwd
+  output: "tmp/tasks/update-registries", // absolute or relative to cwd (no extension)
+  parameters: { registries: ["foo"] },
 });
 
-// Output files:
-//   /output/reports/daily.json  ← script return value
-//   /output/reports/daily.log   ← execution log
+const state = readTaskJson({
+  cwd: "/path/to/your-app",
+  output: "tmp/tasks/update-registries",
+});
+
+// Defaults to tail=true (latest pages). totalLines is bounded by maxLogLines.
+const log = readTaskLog({
+  cwd: "/path/to/your-app",
+  output: "tmp/tasks/update-registries",
+  pageSize: 50,
+});
 ```
 
-### Script Format
-
-The script must `export default` a function (async or sync). Its return value will be persisted to JSON:
+CommonJS:
 
 ```js
-// my-task.mjs
-export default async function () {
-  const data = await fetchSomething();
-  return data;
+const { runTask, readTaskJson, readTaskLog } = require("script-journal");
+```
+
+Parent process stays silent: child stdout/stderr are captured into the log file only.
+
+## Task module contract
+
+```js
+// src/tasks/updateRegistriesTask.mjs
+export async function run(parameters, ctx) {
+  ctx.logger.info("sync started");
+  ctx.patchResults({ total: 0, failed: 0 });
+
+  // ... work using parameters ...
+
+  ctx.patchResults({ total: 3 });
+  return { success: true }; // or { success: false, error: "..." }
 }
 ```
 
-CommonJS format is also supported:
+### `ctx`
 
-```js
-// my-task.js
-module.exports = async function () {
-  return { status: "ok", timestamp: Date.now() };
-};
+| Field | Description |
+|---|---|
+| `logger.debug/info/warn/error(msg)` | Writes `[LEVEL] msg`; captured into NDJSON log |
+| `results` | Current results object (shared reference) |
+| `updateResults(patch)` | Shallow-merge into `results` and persist JSON |
+| `patchResults(patch)` | Same merge, returns `results` |
+
+### Return value
+
+- `undefined` / `null` — keep results accumulated via `patchResults`
+- object — shallow-merged into `results`; `success` decides done/failed; `error` → `state.error`
+
+Exit code: `0` if success, else `1`.
+
+## Status JSON
+
+Written to `<output>.json`:
+
+```json
+{
+  "task": "/abs/path/to/updateRegistriesTask.mjs",
+  "status": "pending|running|done|failed|error",
+  "startedAt": "ISO|null",
+  "finishedAt": "ISO|null",
+  "durationMs": 0,
+  "success": true,
+  "parameters": {},
+  "error": null,
+  "results": {}
+}
 ```
+
+## Log file
+
+`<output>.log` — one NDJSON object per line:
+
+```json
+{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"sync started"}
+```
+
+When the log exceeds `maxLogLines` (default **10000**), older lines are deleted from the head so only the newest lines remain. Pass `maxLogLines: 0` to disable trimming.
 
 ## API
 
-### `runScript(scriptFile, options)`
+### `runTask(options)`
 
-#### Parameters
-
-| Parameter | Type | Required | Description |
+| Field | Type | Required | Description |
 |---|---|---|---|
-| `scriptFile` | `string` | ✅ | Absolute path to the script file to execute |
-| `options.root` | `string` | ✅ | Output root directory |
-| `options.filePath` | `string` | ❌ | Relative path (without extension), supports subdirectories, defaults to `"output"` |
+| `cwd` | `string` | ❌ | Working directory, default `process.cwd()` |
+| `task` | `string` | ✅ | Task file path (absolute or relative to `cwd`) |
+| `output` | `string` | ✅ | Output base path without extension (absolute or relative to `cwd`) |
+| `parameters` | `object` | ❌ | Passed to `run(parameters, ctx)` |
+| `maxLogLines` | `number` | ❌ | Max retained log lines; older lines dropped from head. Default `10000`. `≤0` disables |
 
-#### `filePath` Resolution Rules
+Returns `{ exitCode, jsonPath, logPath }`.
 
-| `filePath` value | JSON output path | Log output path |
-|---|---|---|
-| `"output"` (default) | `<root>/output.json` | `<root>/output.log` |
-| `"result"` | `<root>/result.json` | `<root>/result.log` |
-| `"reports/daily"` | `<root>/reports/daily.json` | `<root>/reports/daily.log` |
+### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 
-#### Return Value `ScriptJournalResult<T>`
+Same `cwd` / `output` resolution rules as `runTask`.
 
-| Field | Type | Description |
-|---|---|---|
-| `success` | `boolean` | Whether the script executed successfully (no exception thrown) |
-| `data` | `T` | Return value of the script function (only present when `success=true`) |
-| `error` | `string` | Error message / stack trace (only present when `success=false`) |
-| `startedAt` | `string` | Execution start time (ISO string) |
-| `finishedAt` | `string` | Execution end time (ISO string) |
-| `durationMs` | `number` | Duration in milliseconds |
-| `jsonPath` | `string` | Absolute path of the output JSON file |
-| `logPath` | `string` | Absolute path of the output log file |
-
-### File Cleanup
-
-Before each execution, any existing `.json` and `.log` files at the same path are **automatically deleted**, ensuring a clean result every time.
+`readTaskLog` defaults to `tail: true` (latest pages). Set `tail: false` to read from the start.
 
 ## License
 
 MIT
-

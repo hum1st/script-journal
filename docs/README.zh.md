@@ -1,6 +1,8 @@
 # script-journal
 
-执行一个 JS 脚本模块，将其返回的数据写入 JSON 文件，将执行过程写入 log 文件。
+在子进程中执行任务模块，持久化 JSON 状态，并采集 NDJSON 日志。宿主应用只需编写 task；执行、状态与日志交互由本库负责。
+
+**ESM** 与 **CommonJS** 消费者均可使用；任务文件可为 `.mjs` / `.js` / `.cjs`。
 
 **其他语言：** [English](../README.md) | [Deutsch](README.de.md) | [Español](README.es.md) | [Français](README.fr.md) | [日本語](README.ja.md)
 
@@ -10,79 +12,118 @@
 npm install script-journal
 ```
 
-## 使用
+## 快速开始
 
 ```ts
-import { runScript } from "script-journal";
+import { runTask, readTaskJson, readTaskLog } from "script-journal";
 
-const result = await runScript("/path/to/my-task.mjs", {
-  root: "/output",
-  filePath: "reports/daily", // 可选，默认 "output"
+const { exitCode, jsonPath, logPath } = await runTask({
+  cwd: "/path/to/your-app", // 可选，默认 process.cwd()
+  task: "src/tasks/updateRegistriesTask.mjs", // 绝对路径，或相对 cwd
+  output: "tmp/tasks/update-registries", // 绝对路径，或相对 cwd（不含扩展名）
+  parameters: { registries: ["foo"] },
 });
 
-// 输出文件：
-//   /output/reports/daily.json  ← 脚本返回值
-//   /output/reports/daily.log   ← 执行过程日志
+const state = readTaskJson({
+  cwd: "/path/to/your-app",
+  output: "tmp/tasks/update-registries",
+});
+
+// 默认 tail=true（查看最后几页）；totalLines 受 maxLogLines 约束
+const log = readTaskLog({
+  cwd: "/path/to/your-app",
+  output: "tmp/tasks/update-registries",
+  pageSize: 50,
+});
 ```
 
-### 脚本格式
-
-脚本需 `export default` 一个函数（支持 async/sync），函数的返回值将被持久化到 JSON：
+CommonJS：
 
 ```js
-// my-task.mjs
-export default async function () {
-  const data = await fetchSomething();
-  return data;
+const { runTask, readTaskJson, readTaskLog } = require("script-journal");
+```
+
+父进程保持静默：子进程 stdout/stderr 仅写入日志文件，不打印到控制台。
+
+## 任务模块约定
+
+```js
+// src/tasks/updateRegistriesTask.mjs
+export async function run(parameters, ctx) {
+  ctx.logger.info("sync started");
+  ctx.patchResults({ total: 0, failed: 0 });
+
+  // ... 使用 parameters 执行业务 ...
+
+  ctx.patchResults({ total: 3 });
+  return { success: true }; // 或 { success: false, error: "..." }
 }
 ```
 
-CommonJS 格式同样支持：
+### `ctx`
 
-```js
-// my-task.js
-module.exports = async function () {
-  return { status: "ok", timestamp: Date.now() };
-};
+| 字段 | 说明 |
+|---|---|
+| `logger.debug/info/warn/error(msg)` | 输出 `[LEVEL] msg`，被捕获为 NDJSON 日志 |
+| `results` | 当前 results（与 patchResults 共享引用） |
+| `updateResults(patch)` | 浅合并到 results 并写回 JSON |
+| `patchResults(patch)` | 同上，并返回 results |
+
+### 返回值
+
+- `undefined` / `null` — 保留 `patchResults` 累积的 results
+- 对象 — 浅合并进 results；`success` 决定 done/failed；`error` → `state.error`
+
+退出码：成功 `0`，否则 `1`。
+
+## 状态 JSON
+
+路径：`<output>.json`
+
+```json
+{
+  "task": "/abs/path/to/updateRegistriesTask.mjs",
+  "status": "pending|running|done|failed|error",
+  "startedAt": "ISO|null",
+  "finishedAt": "ISO|null",
+  "durationMs": 0,
+  "success": true,
+  "parameters": {},
+  "error": null,
+  "results": {}
+}
 ```
+
+## 日志文件
+
+`<output>.log` — 每行一条 NDJSON：
+
+```json
+{"timestamp":"2026-07-19T01:00:00.000Z","level":"info","message":"sync started"}
+```
+
+当日志超过 `maxLogLines`（默认 **10000**）时，从文件头部删除旧行，只保留最新内容。传 `maxLogLines: 0` 可关闭裁剪。
 
 ## API
 
-### `runScript(scriptFile, options)`
+### `runTask(options)`
 
-#### 参数
-
-| 参数 | 类型 | 必填 | 说明 |
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `scriptFile` | `string` | ✅ | 要执行的脚本文件绝对路径 |
-| `options.root` | `string` | ✅ | 输出根目录 |
-| `options.filePath` | `string` | ❌ | 相对路径（不含扩展名），支持子目录，默认 `"output"` |
+| `cwd` | `string` | ❌ | 工作目录，默认 `process.cwd()` |
+| `task` | `string` | ✅ | 任务文件路径（绝对路径，或相对 `cwd`） |
+| `output` | `string` | ✅ | 产出路径，不含扩展名（绝对路径，或相对 `cwd`） |
+| `parameters` | `object` | ❌ | 传给 `run(parameters, ctx)` |
+| `maxLogLines` | `number` | ❌ | 日志最多保留行数，超出从头部删除。默认 `10000`；`≤0` 表示不裁剪 |
 
-#### `filePath` 路径解析规则
+返回 `{ exitCode, jsonPath, logPath }`。
 
-| `filePath` 值 | JSON 输出路径 | log 输出路径 |
-|---|---|---|
-| `"output"`（默认） | `<root>/output.json` | `<root>/output.log` |
-| `"result"` | `<root>/result.json` | `<root>/result.log` |
-| `"reports/daily"` | `<root>/reports/daily.json` | `<root>/reports/daily.log` |
+### `readTaskJson({ cwd?, output })` / `readTaskLog({ cwd?, output, page?, pageSize?, tail? })`
 
-#### 返回值 `ScriptJournalResult<T>`
+`cwd` / `output` 解析规则与 `runTask` 相同。
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `success` | `boolean` | 脚本是否成功执行（未抛出异常） |
-| `data` | `T` | 脚本函数的返回值（仅 `success=true` 时有值） |
-| `error` | `string` | 错误信息/堆栈（仅 `success=false` 时有值） |
-| `startedAt` | `string` | 执行开始时间（ISO 字符串） |
-| `finishedAt` | `string` | 执行结束时间（ISO 字符串） |
-| `durationMs` | `number` | 耗时（毫秒） |
-| `jsonPath` | `string` | 输出的 JSON 文件绝对路径 |
-| `logPath` | `string` | 输出的 log 文件绝对路径 |
+`readTaskLog` 默认 `tail: true`（最后几页）。需要从头读时设 `tail: false`。
 
-### 文件清理
-
-每次执行前，同路径下已有的 `.json` 和 `.log` 文件会被**自动删除**，确保每次结果干净。
-
-## 许可证
+## License
 
 MIT
